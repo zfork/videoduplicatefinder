@@ -5,11 +5,12 @@ Video Duplicate Finder is a cross-platform software to find duplicated video (an
 - Cross-platform
 - Fast scanning speed
 - Ultra fast rescan
+- Optional calling ffmpeg functions natively for even more speed
 - Finds duplicate videos / images based on similarity
 - Windows, Linux and MacOS GUI
 
 # Requirements
-FFmpeg and FFprobe is required.
+FFmpeg and FFprobe is required. When using native ffmpeg mode you must download SHARED and stable version of ffmpeg, which is currently `avcodec-58.dll` etc
 
 # Binaries
 
@@ -34,7 +35,12 @@ sudo apt-get install ffmpeg
 sudo apt-get install libgdiplus
 ```
 #### MacOS user:
-After installing FFmpeg & Ffprobe (see above). Open terminal in the folder where VDF.GUI.dll is and right click on `VDF.GUI` and choose to open with terminal
+Make sure you got **libgdiplus** installed. There are several ways. One way is to install `Homebrew` and run in your terminal:
+```
+brew update
+brew install mono-libgdiplus
+```
+After installing FFmpeg & Ffprobe (see above), double click on ffmpeg. You will get an error that ffmpeg is unsigned. Now open macOS settings -> Security -> General and choose 'Always open'. Do the same for ffprobe. Now open Terminal in VDF folder and give VDF.GUI executable rights `sudo chmod -R 755 VDF.GUI`. Now right click on `VDF.GUI` and choose to open with terminal. Please remember that the steps above to allow running unsigned ffmpeg and ffprobe only last 30 minutes. Alternatively find signed versions, sign them yourself or search for other workarounds to permanently run unsigned apps on your macOS.
 
 # Screenshots
 #### v3

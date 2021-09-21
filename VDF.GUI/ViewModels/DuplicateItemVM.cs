@@ -16,37 +16,35 @@
 
 using System.Diagnostics;
 using Avalonia.Media.Imaging;
+using ReactiveUI;
 using VDF.Core.ViewModels;
 using VDF.GUI.Utils;
 
 namespace VDF.GUI.ViewModels {
 
 	[DebuggerDisplay("{ItemInfo.Path,nq} - {ItemInfo.GroupId}")]
-	public sealed class DuplicateItemViewModel : ViewModelBase {
+	public sealed class DuplicateItemVM : ReactiveObject {
+		//For JSON deserialization only
+		public DuplicateItemVM() {  }
 
-
-		public DuplicateItemViewModel(DuplicateItem item) {
+		public DuplicateItemVM(DuplicateItem item) {
 			ItemInfo = item;
 			ItemInfo.ThumbnailsUpdated += () => {
 				Thumbnail = ImageUtils.JoinImages(ItemInfo.ImageList);
-				OnPropertyChanged(nameof(Thumbnail));
+				this.RaisePropertyChanged(nameof(Thumbnail));
 			};
 		}
-		public DuplicateItem ItemInfo { get; }
+		public DuplicateItem ItemInfo { get; set; }
 
 		public Bitmap Thumbnail { get; set; }
 
 		bool _Checked;
 		public bool Checked {
 			get => _Checked;
-			set {
-				if (value == _Checked) return;
-				_Checked = value;
-				OnPropertyChanged(nameof(Checked));
-			}
+			set => this.RaiseAndSetIfChanged(ref _Checked, value);
 		}
 
-		public bool EqualsFull(DuplicateItemViewModel other) {
+		public bool EqualsFull(DuplicateItemVM other) {
 			if (ReferenceEquals(null, other)) return false;
 			if (ReferenceEquals(this, other)) return true;
 			return ItemInfo.SizeLong == other.ItemInfo.SizeLong &&
@@ -59,7 +57,7 @@ namespace VDF.GUI.ViewModels {
 				   ItemInfo.AudioSampleRate == other.ItemInfo.AudioSampleRate &&
 				   ItemInfo.BitRateKbs == other.ItemInfo.BitRateKbs && ItemInfo.Fps.Equals(other.ItemInfo.Fps);
 		}
-		public bool EqualsButSize(DuplicateItemViewModel other) {
+		public bool EqualsButSize(DuplicateItemVM other) {
 			if (ReferenceEquals(null, other)) return false;
 			if (ReferenceEquals(this, other)) return true;
 			return ItemInfo.GroupId.Equals(other.ItemInfo.GroupId) &&
@@ -72,21 +70,16 @@ namespace VDF.GUI.ViewModels {
 				   ItemInfo.BitRateKbs == other.ItemInfo.BitRateKbs &&
 				   ItemInfo.Fps.Equals(other.ItemInfo.Fps);
 		}
-		public bool EqualsButQuality(DuplicateItemViewModel other) {
+		public bool EqualsButQuality(DuplicateItemVM other) {
 			if (ReferenceEquals(null, other)) return false;
 			if (ReferenceEquals(this, other)) return true;
 			return ItemInfo.GroupId.Equals(other.ItemInfo.GroupId);
 		}
-		public bool EqualsOnlyLength(DuplicateItemViewModel other) {
+		public bool EqualsOnlyLength(DuplicateItemVM other) {
 			if (ReferenceEquals(null, other)) return false;
 			if (ReferenceEquals(this, other)) return true;
 			return ItemInfo.GroupId.Equals(other.ItemInfo.GroupId) && ItemInfo.Duration.Equals(other.ItemInfo.Duration);
 		}
 
-		public void ChangePath(string newPath) {
-			ItemInfo.Path = newPath;
-			OnPropertyChanged(nameof(ItemInfo.Path));
-			OnPropertyChanged(nameof(ItemInfo));
-		}
 	}
 }

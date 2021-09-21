@@ -14,13 +14,14 @@
 // */
 //
 
-using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
+namespace VDF.GUI.Data {
 
-namespace VDF.GUI {
-	public class DuplicateViewModel : UserControl {
-		public DuplicateViewModel() => InitializeComponent();
-
-		void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+	[Flags]
+	public enum MessageBoxButtons {
+		None = 0,
+		Ok = 1,
+		Cancel = 2,
+		Yes = 4,
+		No = 8
 	}
 }

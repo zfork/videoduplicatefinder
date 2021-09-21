@@ -14,19 +14,18 @@
 // */
 //
 
-using System;
 using System.Diagnostics;
 using System.Globalization;
 
 namespace VDF.Core.Utils {
-	static class Extensions {
+	public static class Extensions {
 		public static TimeSpan StopGetElapsedAndRestart(this Stopwatch stopwatch) {
 			stopwatch.Stop();
 			var elapsed = stopwatch.Elapsed;
 			stopwatch.Restart();
 			return elapsed;
 		}
-		public static TimeSpan TrimMiliseconds(this TimeSpan ts) => new TimeSpan(ts.Days, ts.Hours, ts.Minutes, ts.Seconds);
+		public static TimeSpan TrimMiliseconds(this TimeSpan ts) => new(ts.Days, ts.Hours, ts.Minutes, ts.Seconds);
 
 		static readonly string[] suf = { " B", " KB", " MB", " GB", " TB", " PB", " EB" };
 		public static string BytesToString(this long byteCount) {

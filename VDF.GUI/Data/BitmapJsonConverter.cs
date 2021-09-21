@@ -14,30 +14,25 @@
 // */
 //
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Avalonia.Media.Imaging;
+using VDF.GUI.Utils;
 
-namespace VDF.Core {
-	public sealed class Settings {
-		public HashSet<string> IncludeList { get; } = new HashSet<string>();
-		public HashSet<string> BlackList { get; } = new HashSet<string>();
+namespace VDF.GUI.Data {
+	internal class BitmapJsonConverter : JsonConverter<Bitmap> {
+		public override Bitmap Read(
+			ref Utf8JsonReader reader,
+			Type typeToConvert,
+			JsonSerializerOptions options) {
+			using var ms = new MemoryStream(reader.GetBytesFromBase64());
+			return new Bitmap(ms);
+		}
 
-		public bool IgnoreReadOnlyFolders;
-		public bool IgnoreHardlinks;
-		public bool GeneratePreviewThumbnails;
-		public bool UseNativeFfmpegBinding;
-		public bool IncludeSubDirectories = true;
-		public bool IncludeImages = true;
-		public bool ExtendedFFToolsLogging;
-		public bool IgnoreBlackPixels;
-		public bool IgnoreWhitePixels;
-
-		public FFTools.FFHardwareAccelerationMode HardwareAccelerationMode;
-
-		public byte Threshhold = 5;
-		public float Percent = 96f;
-
-		public int ThumbnailCount = 1;
-		public int MaxDegreeOfParallelism = 1;
-
-		public string CustomFFArguments = string.Empty;
+		public override void Write(
+			Utf8JsonWriter writer,
+			Bitmap image,
+			JsonSerializerOptions options) =>
+				writer.WriteBase64StringValue(image.ToByteArray());
 	}
 }

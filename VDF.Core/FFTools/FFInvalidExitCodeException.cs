@@ -15,29 +15,8 @@
 //
 
 
-namespace VDF.Core {
-	public sealed class Settings {
-		public HashSet<string> IncludeList { get; } = new HashSet<string>();
-		public HashSet<string> BlackList { get; } = new HashSet<string>();
-
-		public bool IgnoreReadOnlyFolders;
-		public bool IgnoreHardlinks;
-		public bool GeneratePreviewThumbnails;
-		public bool UseNativeFfmpegBinding;
-		public bool IncludeSubDirectories = true;
-		public bool IncludeImages = true;
-		public bool ExtendedFFToolsLogging;
-		public bool IgnoreBlackPixels;
-		public bool IgnoreWhitePixels;
-
-		public FFTools.FFHardwareAccelerationMode HardwareAccelerationMode;
-
-		public byte Threshhold = 5;
-		public float Percent = 96f;
-
-		public int ThumbnailCount = 1;
-		public int MaxDegreeOfParallelism = 1;
-
-		public string CustomFFArguments = string.Empty;
+namespace VDF.Core.FFTools {
+	public sealed class FFInvalidExitCodeException : Exception {
+		public FFInvalidExitCodeException(string message) : base(message) { }
 	}
 }

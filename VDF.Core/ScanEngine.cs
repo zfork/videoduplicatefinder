@@ -14,18 +14,18 @@
 // */
 //
 
-using System;
-using System.Collections.Generic;
+global using System;
+global using System.IO;
+global using System.Collections.Generic;
+global using System.Drawing;
+global using System.Threading;
+global using System.Threading.Tasks;
 using System.Diagnostics;
-using System.Drawing;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using VDF.Core.FFTools;
 using VDF.Core.Utils;
 using VDF.Core.ViewModels;
+using System.Linq;
 
 namespace VDF.Core {
 	public sealed class ScanEngine {
@@ -79,19 +79,23 @@ namespace VDF.Core {
 
 		public static bool FFmpegExists => !string.IsNullOrEmpty(FfmpegEngine.FFmpegPath);
 		public static bool FFprobeExists => !string.IsNullOrEmpty(FFProbeEngine.FFprobePath);
+		public static bool NativeFFmpegExists => !string.IsNullOrEmpty(FfmpegEngine.FFmpegPath) && File.Exists(Path.Combine(FFmpeg.AutoGen.ffmpeg.RootPath, "avcodec-58.dll"));
 
 		public async void StartSearch() {
 			Prepare();
 			SearchTimer.Start();
+			ElapsedTimer.Start();
+			Logger.Instance.InsertSeparator('-');
 			Logger.Instance.Info("Building file list...");
 			await BuildFileList();
 			Logger.Instance.Info($"Finished building file list in {SearchTimer.StopGetElapsedAndRestart()}");
 			FilesEnumerated?.Invoke(this, new EventArgs());
 			Logger.Instance.Info("Gathering media info and buildings hashes...");
 			if (!cancelationTokenSource.IsCancellationRequested)
-				await Task.Run(GatherInfos, cancelationTokenSource.Token);
+				await GatherInfos();
 			Logger.Instance.Info($"Finished gathering and hashing in {SearchTimer.StopGetElapsedAndRestart()}");
 			BuildingHashesDone?.Invoke(this, new EventArgs());
+			DatabaseUtils.SaveDatabase();
 			Logger.Instance.Info("Scan for duplicates...");
 			if (!cancelationTokenSource.IsCancellationRequested)
 				await Task.Run(ScanForDuplicates, cancelationTokenSource.Token);
@@ -113,7 +117,9 @@ namespace VDF.Core {
 			if (!FFprobeExists)
 				throw new FFNotFoundException("Cannot find FFprobe");
 
-			FfmpegEngine.UseCuda = Settings.UseCuda;
+			FfmpegEngine.HardwareAccelerationMode = Settings.HardwareAccelerationMode;
+			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
+			FfmpegEngine.UseNativeBinding = Settings.UseNativeFfmpegBinding;
 			Duplicates.Clear();
 			positionList.Clear();
 			ElapsedTimer.Reset();
@@ -121,7 +127,7 @@ namespace VDF.Core {
 			pauseTokenSource = new PauseTokenSource();
 			cancelationTokenSource = new CancellationTokenSource();
 			float positionCounter = 0f;
-			for (var i = 0; i < Settings.ThumbnailCount; i++) {
+			for (int i = 0; i < Settings.ThumbnailCount; i++) {
 				positionCounter += 1.0F / (Settings.ThumbnailCount + 1);
 				positionList.Add(positionCounter);
 			}
@@ -129,7 +135,10 @@ namespace VDF.Core {
 		}
 
 		Task BuildFileList() => Task.Run(() => {
+
 			DatabaseUtils.LoadDatabase();
+			int oldFileCount = DatabaseUtils.Database.Count;
+
 			foreach (var path in Settings.IncludeList) {
 				if (!Directory.Exists(path)) continue;
 
@@ -138,8 +147,8 @@ namespace VDF.Core {
 					var fEntry = new FileEntry(file);
 					if (!DatabaseUtils.Database.TryGetValue(fEntry, out var dbEntry))
 						DatabaseUtils.Database.Add(fEntry);
-					else if (fEntry.DateCreated != dbEntry.DateCreated || 
-						    fEntry.DateModified != dbEntry.DateModified || 
+					else if (fEntry.DateCreated != dbEntry.DateCreated ||
+							fEntry.DateModified != dbEntry.DateModified ||
 							fEntry.FileSize != dbEntry.FileSize) {
 						// -> Modified or different file
 						DatabaseUtils.Database.Remove(dbEntry);
@@ -148,6 +157,7 @@ namespace VDF.Core {
 				}
 			}
 
+			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
 		});
 
 		bool InvalidEntry(FileEntry entry) {
@@ -176,19 +186,19 @@ namespace VDF.Core {
 
 		public static void BlackListFileEntry(string filePath) => DatabaseUtils.BlacklistFileEntry(filePath);
 
-		void GatherInfos() {
+		async Task GatherInfos() {
 			try {
 				InitProgress(DatabaseUtils.Database.Count);
-				Parallel.ForEach(DatabaseUtils.Database, new ParallelOptions { CancellationToken = cancelationTokenSource.Token }, entry => {
+				await Parallel.ForEachAsync(DatabaseUtils.Database, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, (entry, token) => {
 					while (pauseTokenSource.IsPaused) Thread.Sleep(50);
 
-					if (InvalidEntry(entry)) return;
+					if (InvalidEntry(entry)) return ValueTask.CompletedTask;
 
 					if (entry.mediaInfo == null && !entry.IsImage) {
-						MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path);
+						MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging);
 						if (info == null) {
 							entry.Flags.Set(EntryFlags.MetadataError);
-							return;
+							return ValueTask.CompletedTask;
 						}
 
 						entry.mediaInfo = info;
@@ -197,13 +207,14 @@ namespace VDF.Core {
 					if (entry.grayBytes == null)
 						entry.grayBytes = new Dictionary<double, byte[]?>();
 
-					
+
 					if (entry.IsImage && entry.grayBytes.Count == 0)
 						GetGrayBytesFromImage(entry);
 					else if (!entry.IsImage)
-						FfmpegEngine.GetGrayBytesFromVideo(entry, positionList);
+						FfmpegEngine.GetGrayBytesFromVideo(entry, positionList, Settings.ExtendedFFToolsLogging);
 
 					IncrementProgress(entry.Path);
+					return ValueTask.CompletedTask;
 				});
 			}
 			catch (OperationCanceledException) { }
@@ -211,38 +222,46 @@ namespace VDF.Core {
 
 		void ScanForDuplicates() {
 
-			var percentageDifference = 1.0f - Settings.Percent / 100f;
-			var duplicateDict = new Dictionary<string, DuplicateItem>();
+			float percentageDifference = 1.0f - Settings.Percent / 100f;
+			Dictionary<string, DuplicateItem>? duplicateDict = new();
 
 
 			//Exclude existing database entries which not met current scan settings
-			List<FileEntry> ScanList = new List<FileEntry>(DatabaseUtils.Database);
+			List<FileEntry> ScanList = new(DatabaseUtils.Database);
 			ScanList.RemoveAll(InvalidEntryForDuplicateCheck);
+
+			Logger.Instance.Info($"Scanning for duplicates in {ScanList.Count:N0} files");
 
 			InitProgress(ScanList.Count);
 
+			bool ignoreBlackPixels = Settings.IgnoreBlackPixels;
+			bool ignoreWhitePixels = Settings.IgnoreWhitePixels;
+
 			try {
-				Parallel.For(0, ScanList.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token }, i => {
+				Parallel.For(0, ScanList.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, i => {
 					while (pauseTokenSource.IsPaused) Thread.Sleep(50);
 
-					var entry = ScanList[i];
-					for (var n = i + 1; n < ScanList.Count; n++) {
-						var compItem = ScanList[n];
+					FileEntry? entry = ScanList[i];
+					for (int n = i + 1; n < ScanList.Count; n++) {
+						FileEntry? compItem = ScanList[n];
 						if (entry.IsImage && !compItem.IsImage) continue;
-						var duplicateCounter = 0;
+						int duplicateCounter = 0;
 						float[] percent;
 						if (entry.IsImage) {
 							percent = new float[1];
-							percent[0] = GrayBytesUtils.PercentageDifference(entry.grayBytes[0]!, compItem.grayBytes[0]!);
-							if (percent[0] < percentageDifference)
+							percent[0] = ignoreBlackPixels || ignoreWhitePixels ?
+											GrayBytesUtils.PercentageDifferenceWithoutSpecificPixels(entry.grayBytes[0]!, compItem.grayBytes[0]!, ignoreBlackPixels, ignoreWhitePixels) :
+											GrayBytesUtils.PercentageDifference(entry.grayBytes[0]!, compItem.grayBytes[0]!);
+							if (percent[0] <= percentageDifference)
 								duplicateCounter++;
 						}
 						else {
 							percent = new float[positionList.Count];
-							for (var j = 0; j < positionList.Count; j++) {
-								percent[j] =
-									GrayBytesUtils.PercentageDifference(entry.grayBytes[entry.GetGrayBytesIndex(positionList[j])]!, compItem.grayBytes[compItem.GetGrayBytesIndex(positionList[j])]!);
-								if (percent[j] < percentageDifference) {
+							for (int j = 0; j < positionList.Count; j++) {
+								percent[j] = ignoreBlackPixels || ignoreWhitePixels ?
+												GrayBytesUtils.PercentageDifferenceWithoutSpecificPixels(entry.grayBytes[entry.GetGrayBytesIndex(positionList[j])]!, compItem.grayBytes[compItem.GetGrayBytesIndex(positionList[j])]!, ignoreBlackPixels, ignoreWhitePixels) :
+												GrayBytesUtils.PercentageDifference(entry.grayBytes[entry.GetGrayBytesIndex(positionList[j])]!, compItem.grayBytes[compItem.GetGrayBytesIndex(positionList[j])]!);
+								if (percent[j] <= percentageDifference) {
 									duplicateCounter++;
 								}
 								else { break; }
@@ -256,16 +275,17 @@ namespace VDF.Core {
 						}
 
 						lock (duplicateDict) {
-							var percSame = percent.Average();
-							var foundBase = duplicateDict.TryGetValue(entry.Path, out var existingBase);
-							var foundComp = duplicateDict.TryGetValue(compItem.Path, out var existingComp);
+							float percSame = percent.Average();
+							bool foundBase = duplicateDict.TryGetValue(entry.Path, out DuplicateItem? existingBase);
+							bool foundComp = duplicateDict.TryGetValue(compItem.Path, out DuplicateItem? existingComp);
 
 							if (foundBase && foundComp) {
 								//this happens with 4+ identical items:
 								//first, 2+ duplicate groups are found independently, they are merged in this branch
 								if (existingBase!.GroupId != existingComp!.GroupId) {
-									foreach (var dup in duplicateDict.Values.Where(c =>
-										c.GroupId == existingComp.GroupId))
+									Guid groupID = existingComp!.GroupId;
+									foreach (DuplicateItem? dup in duplicateDict.Values.Where(c =>
+										c.GroupId == groupID))
 										dup.GroupId = existingBase.GroupId;
 								}
 							}
@@ -290,67 +310,67 @@ namespace VDF.Core {
 			catch (OperationCanceledException) { }
 			Duplicates = new HashSet<DuplicateItem>(duplicateDict.Values);
 		}
-		public void CleanupDatabase() {
-			DatabaseUtils.CleanupDatabase();
+		public async void CleanupDatabase() {
+			await Task.Run(() => {
+				DatabaseUtils.CleanupDatabase();
+			});
 			DatabaseCleaned?.Invoke(this, new EventArgs());
 		}
+		public static void ClearDatabase() => DatabaseUtils.ClearDatabase();
 		public static bool ExportDataBaseToJson(string jsonFile, JsonSerializerOptions options) => DatabaseUtils.ExportDatabaseToJson(jsonFile, options);
 		public async void RetrieveThumbnails() {
-			await Task.Run(() => {
-				var dupList = Duplicates.Where(d => d.ImageList == null || d.ImageList.Count == 0).ToList();
-				try {
-					Parallel.For(0, dupList.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token }, i => {
-						var entry = dupList[i];
-						List<Image> list;
-						if (entry.IsImage) {
-							//For images it doesn't make sense to load the actual image more than once
-							list = new List<Image>(1);
-							try {
-								Image bitmapImage = Image.FromFile(entry.Path);
-								float resizeFactor = 1f;
-								if (bitmapImage.Width > 100 || bitmapImage.Height > 100) {
-									float widthFactor = bitmapImage.Width / 100f;
-									float heightFactor = bitmapImage.Height / 100f;
-									resizeFactor = Math.Max(widthFactor, heightFactor);
+			var dupList = Duplicates.Where(d => d.ImageList == null || d.ImageList.Count == 0).ToList();
+			try {
+				await Parallel.ForEachAsync(dupList, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = Settings.MaxDegreeOfParallelism }, (entry, cancellationToken) => {
+					List<Image> list;
+					if (entry.IsImage) {
+						//For images it doesn't make sense to load the actual image more than once
+						list = new List<Image>(1);
+						try {
+							Image bitmapImage = Image.FromFile(entry.Path);
+							float resizeFactor = 1f;
+							if (bitmapImage.Width > 100 || bitmapImage.Height > 100) {
+								float widthFactor = bitmapImage.Width / 100f;
+								float heightFactor = bitmapImage.Height / 100f;
+								resizeFactor = Math.Max(widthFactor, heightFactor);
 
-								}
-								int width = Convert.ToInt32(bitmapImage.Width / resizeFactor);
-								int height = Convert.ToInt32(bitmapImage.Height / resizeFactor);
-								var newImage = new Bitmap(width, height);
-								using (var g = Graphics.FromImage(newImage)) {
-									g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-									g.DrawImage(bitmapImage, 0, 0, newImage.Width, newImage.Height);
-								}
-
-								bitmapImage.Dispose();
-								list.Add(newImage);
 							}
-							catch (Exception ex) {
-								Logger.Instance.Info($"Failed loading image from file: '{entry.Path}', reason: {ex.Message}, stacktrace {ex.StackTrace}");
-								return;
+							int width = Convert.ToInt32(bitmapImage.Width / resizeFactor);
+							int height = Convert.ToInt32(bitmapImage.Height / resizeFactor);
+							var newImage = new Bitmap(width, height);
+							using (var g = Graphics.FromImage(newImage)) {
+								g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+								g.DrawImage(bitmapImage, 0, 0, newImage.Width, newImage.Height);
 							}
 
+							bitmapImage.Dispose();
+							list.Add(newImage);
 						}
-						else {
-							list = new List<Image>(positionList.Count);
-							for (int j = 0; j < positionList.Count; j++) {
-								var b = FfmpegEngine.GetThumbnail(new FfmpegSettings {
-									File = entry.Path,
-									Position = TimeSpan.FromSeconds(entry.Duration.TotalSeconds * positionList[j]),
-									GrayScale = 0,
-								});
-								if (b == null || b.Length == 0) return;
-								using var byteStream = new MemoryStream(b);
-								var bitmapImage = Image.FromStream(byteStream);
-								list.Add(bitmapImage);
-							}
+						catch (Exception ex) {
+							Logger.Instance.Info($"Failed loading image from file: '{entry.Path}', reason: {ex.Message}, stacktrace {ex.StackTrace}");
+							return ValueTask.CompletedTask;
 						}
-						entry.SetThumbnails(list);
 
-					});
-				}
-				catch (OperationCanceledException) { }
-			});
+					}
+					else {
+						list = new List<Image>(positionList.Count);
+						for (int j = 0; j < positionList.Count; j++) {
+							var b = FfmpegEngine.GetThumbnail(new FfmpegSettings {
+								File = entry.Path,
+								Position = TimeSpan.FromSeconds(entry.Duration.TotalSeconds * positionList[j]),
+								GrayScale = 0,
+							}, Settings.ExtendedFFToolsLogging);
+							if (b == null || b.Length == 0) return ValueTask.CompletedTask;
+							using var byteStream = new MemoryStream(b);
+							var bitmapImage = Image.FromStream(byteStream);
+							list.Add(bitmapImage);
+						}
+					}
+					entry.SetThumbnails(list);
+					return ValueTask.CompletedTask;
+				});
+			}
+			catch (OperationCanceledException) { }
 			ThumbnailsRetrieved?.Invoke(this, new EventArgs());
 		}
 
@@ -373,6 +393,7 @@ namespace VDF.Core {
 				var d = GrayBytesUtils.GetGrayScaleValues(b);
 				if (d == null) {
 					imageFile.Flags.Set(EntryFlags.TooDark);
+					Logger.Instance.Info($"ERROR: Graybytes too dark of: {imageFile.Path}");
 					return;
 				}
 
@@ -390,12 +411,69 @@ namespace VDF.Core {
 			foreach (DuplicateItem item in Duplicates) {
 				if (blackList.Contains(item.GroupId)) continue;
 				var groupItems = Duplicates.Where(a => a.GroupId == item.GroupId);
-				groupItems.OrderByDescending(d => d.Duration).First().IsBestDuration = true;
-				groupItems.OrderBy(d => d.SizeLong).First().IsBestSize = true;
-				groupItems.OrderByDescending(d => d.Duration).First().IsBestFps = true;
-				groupItems.OrderByDescending(d => d.BitRateKbs).First().IsBestBitRateKbs = true;
-				groupItems.OrderByDescending(d => d.AudioSampleRate).First().IsBestAudioSampleRate = true;
-				groupItems.OrderByDescending(d => d.FrameSizeInt).First().IsBestFrameSize = true;
+				DuplicateItem bestMatch;
+				//Duration
+				if (!groupItems.First().IsImage) {
+					groupItems = groupItems.OrderByDescending(d => d.Duration);
+					bestMatch = groupItems.First();
+					bestMatch.IsBestDuration = true;
+					foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+						if (otherItem.Duration < bestMatch.Duration)
+							break;
+						otherItem.IsBestDuration = true;
+					}
+				}
+				//Size
+				groupItems = groupItems.OrderBy(d => d.SizeLong);
+				bestMatch = groupItems.First();
+				bestMatch.IsBestSize = true;
+				foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+					if (otherItem.SizeLong > bestMatch.SizeLong)
+						break;
+					otherItem.IsBestSize = true;
+				}
+				//Fps
+				if (!groupItems.First().IsImage) {
+					groupItems = groupItems.OrderByDescending(d => d.Fps);
+					bestMatch = groupItems.First();
+					bestMatch.IsBestFps = true;
+					foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+						if (otherItem.Fps < bestMatch.Fps)
+							break;
+						otherItem.IsBestFps = true;
+					}
+				}
+				//BitRateKbs
+				if (!groupItems.First().IsImage) {
+					groupItems = groupItems.OrderByDescending(d => d.BitRateKbs);
+					bestMatch = groupItems.First();
+					bestMatch.IsBestBitRateKbs = true;
+					foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+						if (otherItem.BitRateKbs < bestMatch.BitRateKbs)
+							break;
+						otherItem.IsBestBitRateKbs = true;
+					}
+				}
+				//AudioSampleRate
+				if (!groupItems.First().IsImage) {
+					groupItems = groupItems.OrderByDescending(d => d.AudioSampleRate);
+					bestMatch = groupItems.First();
+					bestMatch.IsBestAudioSampleRate = true;
+					foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+						if (otherItem.AudioSampleRate < bestMatch.AudioSampleRate)
+							break;
+						otherItem.IsBestAudioSampleRate = true;
+					}
+				}
+				//FrameSizeInt
+				groupItems = groupItems.OrderByDescending(d => d.FrameSizeInt);
+				bestMatch = groupItems.First();
+				bestMatch.IsBestFrameSize = true;
+				foreach (DuplicateItem otherItem in groupItems.Skip(1)) {
+					if (otherItem.FrameSizeInt < bestMatch.FrameSizeInt)
+						break;
+					otherItem.IsBestFrameSize = true;
+				}
 				blackList.Add(item.GroupId);
 			}
 		}

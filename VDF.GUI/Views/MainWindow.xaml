@@ -25,9 +25,10 @@
     mc:Ignorable="d">
     <mvvm:FluentWindow.Resources>
         <mvvm:IsBestConverter x:Key="IsBestConverter" />
+        <mvvm:ExtraShortDateTimeConverter x:Key="ExtraShortDateTimeConverter" />
     </mvvm:FluentWindow.Resources>
     <mvvm:FluentWindow.DataContext>
-        <vm:MainWindowViewModel />
+        <vm:MainWindowVM />
     </mvvm:FluentWindow.DataContext>
     <Grid>
         <TextBlock
@@ -43,12 +44,7 @@
                             FontSize="12"
                             Text="Scanner" />
                     </TabItem.Header>
-                    <Grid Background="#3A3A3A">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+                    <Grid Background="#3A3A3A" RowDefinitions="Auto, *, Auto, Auto">
                         <Menu
                             Grid.Row="0"
                             MinHeight="30"
@@ -116,12 +112,19 @@
                             </MenuItem>
                             <MenuItem>
                                 <MenuItem.Header>
-                                    <TextBlock
-                                        Margin="5,0,0,0"
-                                        VerticalAlignment="Center"
-                                        Text="Database" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock
+                                                Margin="5,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Text="Database" />
+                                        <Path
+                                                Margin="4,2,0,0"
+                                                VerticalAlignment="Center"
+                                                Data="M 0 0 L 6 6 L 12 0 Z"
+                                                Fill="{StaticResource SystemBaseHighColor}" />
+                                    </StackPanel>
                                 </MenuItem.Header>
-                                <MenuItem Command="{Binding CleanDatabaseCommand}">
+                                <MenuItem Command="{Binding CleanDatabaseCommand}" ToolTip.Tip="Removes entries which file no longer exists or which failed on ffmpeg/ffprobe">
                                     <MenuItem.Header>
                                         <StackPanel Orientation="Horizontal">
                                             <Viewbox Width="16" Height="16">
@@ -136,12 +139,13 @@
                                         </StackPanel>
                                     </MenuItem.Header>
                                 </MenuItem>
+                                <Separator/>
                                 <MenuItem Command="{Binding ExportDataBaseToJsonCommand}">
                                     <MenuItem.Header>
                                         <TextBlock
                                             Margin="5,0,0,0"
                                             VerticalAlignment="Center"
-                                            Text="Export Database To Json" />
+                                            Text="Export To Json" />
                                     </MenuItem.Header>
                                 </MenuItem>
                                 <MenuItem Command="{Binding ExportDataBaseToJsonPrettyCommand}">
@@ -149,7 +153,23 @@
                                         <TextBlock
                                             Margin="5,0,0,0"
                                             VerticalAlignment="Center"
-                                            Text="Export Database To Json (pretty)" />
+                                            Text="Export To Json (pretty)" />
+                                    </MenuItem.Header>
+                                </MenuItem>
+                                <Separator/>
+                                <MenuItem Command="{Binding ClearDatabaseCommand}">
+                                    <MenuItem.Header>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16">
+                                                <Canvas Width="24" Height="24">
+                                                    <Path Data="M20 6.91L17.09 4L12 9.09L6.91 4L4 6.91L9.09 12L4 17.09L6.91 20L12 14.91L17.09 20L20 17.09L14.91 12L20 6.91Z" Fill="Red" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock
+                                                Margin="5,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Text="Clear Database" />
+                                        </StackPanel>
                                     </MenuItem.Header>
                                 </MenuItem>
                             </MenuItem>
@@ -161,13 +181,53 @@
                                         Text="Latest Release" />
                                 </MenuItem.Header>
                             </MenuItem>
-                            <MenuItem IsVisible="{Binding IsDebug}"  Command="{Binding OpenOwnFolderCommand}">
+                            <MenuItem IsVisible="{Binding IsDebug}" Command="{Binding OpenOwnFolderCommand}">
                                 <MenuItem.Header>
                                     <TextBlock
                                         Margin="5,0,0,0"
                                         VerticalAlignment="Center"
                                         Text="Open Folder" />
                                 </MenuItem.Header>
+                            </MenuItem>
+                            <MenuItem IsVisible="{Binding !!Duplicates.Count}">
+                                <MenuItem.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock
+                                                Margin="5,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Text="Export Scan Results" />
+                                        <Path
+                                                Margin="4,2,0,0"
+                                                VerticalAlignment="Center"
+                                                Data="M 0 0 L 6 6 L 12 0 Z"
+                                                Fill="{StaticResource SystemBaseHighColor}" />
+                                    </StackPanel>
+                                </MenuItem.Header>
+                                <MenuItem Command="{Binding ExportScanResultsCommand}">
+                                    <MenuItem.Header>
+                                        <TextBlock
+                                            Margin="5,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Text="To Json" />
+                                    </MenuItem.Header>
+                                </MenuItem>
+                                <MenuItem Command="{Binding ExportScanResultsPrettyCommand}">
+                                    <MenuItem.Header>
+                                        <TextBlock
+                                            Margin="5,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Text="To Json (pretty)" />
+                                    </MenuItem.Header>
+                                </MenuItem>
+                                <Separator/>
+                                <MenuItem Command="{Binding ExportScanResultsToFileCommand}">
+                                    <MenuItem.Header>
+                                        <TextBlock
+                                            Margin="5,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Text="To File including thumbnails" />
+                                    </MenuItem.Header>
+                                </MenuItem>
                             </MenuItem>
                         </Menu>
                         <Grid Grid.Row="1">
@@ -343,6 +403,7 @@
                             <DataGrid Name="dataGridGrouping" Grid.Row="2" CanUserResizeColumns="True">
                                 <DataGrid.KeyBindings>
                                     <KeyBinding Command="{Binding RenameFileCommand}" Gesture="F2"/>
+                                    <KeyBinding Command="{Binding ToggleCheckboxCommand}" Gesture="Space"/>
                                 </DataGrid.KeyBindings>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn>
@@ -399,12 +460,14 @@
                                                 <TextBlock Text="Duration / type" />
                                                 <TextBlock Text="Resolution" />
                                                 <TextBlock Text="Size" />
+                                                <TextBlock Text="Creation Date" />
                                             </StackPanel>
                                         </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Grid Margin="10,0,0,0">
                                                     <Grid.RowDefinitions>
+                                                        <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
@@ -434,6 +497,11 @@
                                                         Text="{Binding ItemInfo.Size}"
                                                         Foreground="{Binding ItemInfo.IsBestSize, Converter={StaticResource IsBestConverter}}"
                                                         TextWrapping="Wrap" />
+                                                    <TextBlock
+                                                        Grid.Row="3"
+                                                        Margin="2"
+                                                        Text="{Binding ItemInfo.DateCreated, Converter={StaticResource ExtraShortDateTimeConverter}}"
+                                                        TextWrapping="Wrap" />
                                                 </Grid>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
@@ -444,12 +512,14 @@
                                                 <TextBlock Text="Format" />
                                                 <TextBlock Text="Fps" />
                                                 <TextBlock Text="Bit Rate" />
+                                                <TextBlock Text=" "/>
                                             </StackPanel>
                                         </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Grid IsVisible="{Binding !ItemInfo.IsImage}">
                                                     <Grid.RowDefinitions>
+                                                        <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
@@ -481,12 +551,14 @@
                                                 <TextBlock Text="Audio Format" />
                                                 <TextBlock Text="Audio Channel" />
                                                 <TextBlock Text="Audio Sample Rate" />
+                                                <TextBlock Text=" "/>
                                             </StackPanel>
                                         </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Grid IsVisible="{Binding !ItemInfo.IsImage}">
                                                     <Grid.RowDefinitions>
+                                                        <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
                                                         <RowDefinition />
@@ -621,12 +693,42 @@
                                             <MenuItem Command="{Binding ExpandAllGroupsCommand}" Header="Expand all" />
                                             <MenuItem Command="{Binding CollapseAllGroupsCommand}" Header="Collapse all" />
                                         </MenuItem>
+                                        <MenuItem Header="Selected Group">
+                                            <MenuItem Command="{Binding MarkGroupAsNotAMatchCommand}" Header="Mark as 'Not a match'" ToolTip.Tip="Hides this group and exclude it from future scans, except when there is a new duplicate." />
+                                        </MenuItem>
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                             </DataGrid>
                         </Grid>
-
-                        <Grid Grid.Row="2" Background="#222222">
+                        <Grid Grid.Row="2" Background="#222222" IsVisible="{Binding !!Duplicates.Count}" RowDefinitions="Auto, Auto">
+                            <StackPanel MinHeight="20" Orientation="Horizontal" Grid.Row="0">
+                                <TextBlock Text="{Binding DuplicatesSelectedCounter, Mode=OneWay, StringFormat=Total Selected Duplicates: \{0\}}" />
+                            </StackPanel>
+                            <StackPanel MinHeight="20" Orientation="Horizontal" Grid.Row="1">
+                                <TextBlock Text="{Binding Duplicates.Count, Mode=OneWay, StringFormat=Duplicates In List: \{0\}}" />
+                                <Separator
+                                    Width="1"
+                                    Margin="5"
+                                    Background="DarkGray" />
+                                <TextBlock Text="{Binding TotalDuplicates, Mode=OneWay, StringFormat=Total Duplicates: \{0\}}" />
+                                <Separator
+                                    Width="1"
+                                    Margin="5"
+                                    Background="DarkGray" />
+                                <TextBlock Text="{Binding TotalDuplicateGroups, Mode=OneWay, StringFormat=Total Duplicate Groups: \{0\}}" />
+                                <Separator
+                                    Width="1"
+                                    Margin="5"
+                                    Background="DarkGray" />
+                                <TextBlock Text="{Binding TotalDuplicatesSize, Mode=OneWay, StringFormat=Total Size: \{0\}}" />
+                                <Separator
+                                    Width="1"
+                                    Margin="5"
+                                    Background="DarkGray" />
+                                <TextBlock Text="{Binding TotalSizeRemoved, Mode=OneWay, StringFormat=Total Size Removed: \{0\}}" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Grid.Row="3" Background="#222222">
                             <StackPanel MinHeight="20" Orientation="Horizontal">
                                 <ProgressBar
                                     Name="PbScanProgress"
@@ -659,8 +761,23 @@
                             FontSize="12"
                             Text="Settings" />
                     </TabItem.Header>
-                    <Grid IsEnabled="{Binding !IsScanning}" RowDefinitions="Auto, Auto, *">
-                        <Grid ColumnDefinitions="Auto, Auto, *">
+                    <Grid IsEnabled="{Binding !IsScanning}" RowDefinitions="Auto, Auto, Auto, *">
+                        <Menu
+                            Grid.Row="0"
+                            MinHeight="30"
+                            Background="#222222">
+                            <MenuItem Command="{Binding SaveSettingsProfileCommand}">
+                                <MenuItem.Header>
+                                    <TextBlock VerticalAlignment="Center" Text="Save To File" />
+                                </MenuItem.Header>
+                            </MenuItem>
+                            <MenuItem Command="{Binding LoadSettingsProfileCommand}">
+                                <MenuItem.Header>
+                                    <TextBlock VerticalAlignment="Center" Text="Load From File" />
+                                </MenuItem.Header>
+                            </MenuItem>
+                        </Menu>
+                        <Grid Grid.Row="1" ColumnDefinitions="Auto, Auto, *">
                             <StackPanel Margin="5,5,0,0">
                                 <CheckBox
                                     VerticalAlignment="Center"
@@ -677,11 +794,16 @@
                                     Content="Include Images"
                                     IsChecked="{Binding IncludeImages}"
                                     IsThreeState="False" />
-                                <CheckBox
+                                <TextBlock
                                     VerticalAlignment="Center"
-                                    Content="Enable GPU Acceleration (Nvidia)"
-                                    IsChecked="{Binding UseCuda}"
-                                    IsThreeState="False" />
+                                    FontSize="14"
+                                    ToolTip.Tip="Hardware acceleration mode of ffmpeg"
+                                    Text="Hardware Acceleration:" />
+                                <ComboBox
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Hardware acceleration mode of ffmpeg"
+                                    Items="{Binding HardwareAccelerationModes}"
+                                    SelectedItem="{Binding HardwareAccelerationMode}" />
                                 <CheckBox
                                     VerticalAlignment="Center"
                                     Content="Generate Preview Images"
@@ -693,10 +815,41 @@
                                     Content="Exclude hardlinks"
                                     IsChecked="{Binding IgnoreHardlinks}"
                                     IsThreeState="False" />
+                                <CheckBox
+                                    VerticalAlignment="Center"
+                                    Content="Extended FFTools Logging"
+                                    ToolTip.Tip="If activated ffmpeg and ffprobe errors will be written to the log"
+                                    IsChecked="{Binding ExtendedFFToolsLogging}"
+                                    IsThreeState="False" />
+                                <CheckBox
+                                    VerticalAlignment="Center"
+                                    Content="Auto backup scan results"
+                                    ToolTip.Tip="If activated a backup gets created each time the scan results list gets changed"
+                                    IsChecked="{Binding BackupAfterListChanged}"
+                                    IsThreeState="False" />
+                                <CheckBox
+                                    VerticalAlignment="Center"
+                                    Content="Use native Ffmpeg binding"
+                                    ToolTip.Tip="If activated it will call ffmpeg functions natively instead of spawning a new ffmpeg.exe process. This is MUCH(!!) faster. WARNING: You must use the latest SHARED and STABLE ffmpeg version. If something goes wrong then whole VDF will crash."
+                                    IsChecked="{Binding UseNativeFfmpegBinding}"
+                                    IsThreeState="False" />
+                                <CheckBox
+                                    VerticalAlignment="Center"
+                                    Content="Ignore Black Pixels"
+                                    ToolTip.Tip="Skip black pixels when comparing thumbnails. Lowers the chance for 'false positives' if thumbnails contain too much dark and raises the chance to detect duplicates if one of the thumbnails have black bars and the others not. In rare scenarios this might raise the 'false positives' instead. Slows down the scan speed by a bit."
+                                    IsChecked="{Binding IgnoreBlackPixels}"
+                                    IsThreeState="False" />
+                                <CheckBox
+                                    VerticalAlignment="Center"
+                                    Content="Ignore White Pixels"
+                                    ToolTip.Tip="Skip white pixels when comparing thumbnails. Lowers the chance for 'false positives' if thumbnails contain too much brightness and raises the chance to detect duplicates if one of the thumbnails have white bars and the others not. In rare scenarios this might raise the 'false positives' instead. Slows down the scan speed by a bit."
+                                    IsChecked="{Binding IgnoreWhitePixels}"
+                                    IsThreeState="False" />
                             </StackPanel>
                             <StackPanel Margin="15,5,0,0" Grid.Column="1">
                                 <TextBlock
                                     VerticalAlignment="Center"
+                                    ToolTip.Tip="Minimum percentage that thumbnails must match before they are considered duplicates"
                                     Text="Percent:" />
                                 <NumericUpDown
                                     Height="26"
@@ -705,23 +858,48 @@
                                     VerticalAlignment="Center"
                                     Maximum="100"
                                     Minimum="1"
+                                    ToolTip.Tip="Minimum percentage that thumbnails must match before they are considered duplicates"
                                     Value="{Binding Percent}" />
                                 <TextBlock
                                     Margin="0,5,0,0"
+                                    ToolTip.Tip="Number of thumbnails generated per file. This only applies to video files. A high number means that the scan takes longer but also the chance of a 'false positive' decreases."
                                     VerticalAlignment="Center"
                                     Text="Thumbnails:" />
                                 <NumericUpDown
                                     Height="26"
                                     Width="200"
+                                    ToolTip.Tip="Number of thumbnails generated per file. This only applies to video files. A high number means that the scan takes longer but also the chance of a 'false positive' decreases."
                                     HorizontalAlignment="Left"
                                     VerticalAlignment="Center"
                                     Maximum="100"
                                     Minimum="1"
                                     Value="{Binding Thumbnails}" />
+                                <TextBlock
+                                    Margin="0,5,0,0"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Limits the amount of concurrent tasks. A value of -1 leaves it up to the system to decide, a value of 1 is most stable."
+                                    Text="Max Degree Of Parallelism:" />
+                                <NumericUpDown
+                                    Height="26"
+                                    Width="200"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Limits the amount of concurrent tasks. A value of -1 leaves it up to the system to decide, a value of 1 is most stable."
+                                    Maximum="100"
+                                    Minimum="-1"
+                                    Value="{Binding MaxDegreeOfParallelism}" />
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="FF(mpeg/probe) arguments passed to the end of the internal arguments. Most users can leave this empty."
+                                    Text="Custom FF Arguments:" />
+                                <TextBox
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="FF(mpeg/probe) arguments passed to the end of the internal arguments. Most users can leave this empty."
+                                    Text="{Binding CustomFFArguments}" />
                             </StackPanel>
                         </Grid>
                         <Grid
-                            Grid.Row="1"
+                            Grid.Row="2"
                             RowDefinitions="Auto, 300"
                             ColumnDefinitions="*, *"
                             Margin="0,10,5,0">
@@ -815,7 +993,7 @@
                                 </Menu>
                                 <ListBox
                                     Name="ListboxBlacklist"
-                                    Grid.Row="1"                                        
+                                    Grid.Row="1"
                                     Items="{Binding Blacklists}" />
                             </Grid>
                         </Grid>
@@ -849,7 +1027,7 @@
                                 </MenuItem.Header>
                             </MenuItem>
                         </Menu>
-                        <ListBox MinHeight="70"  Grid.Row="1" Items="{Binding LogItems}" Margin="5"/>
+                        <ListBox MinHeight="70"  Grid.Row="1" Items="{Binding LogItems}" Margin="5" ScrollViewer.HorizontalScrollBarVisibility="Visible"/>
                     </Grid>
                 </TabItem>
             </TabControl>

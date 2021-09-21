@@ -14,30 +14,21 @@
 // */
 //
 
+using ProtoBuf;
 
 namespace VDF.Core {
-	public sealed class Settings {
-		public HashSet<string> IncludeList { get; } = new HashSet<string>();
-		public HashSet<string> BlackList { get; } = new HashSet<string>();
 
-		public bool IgnoreReadOnlyFolders;
-		public bool IgnoreHardlinks;
-		public bool GeneratePreviewThumbnails;
-		public bool UseNativeFfmpegBinding;
-		public bool IncludeSubDirectories = true;
-		public bool IncludeImages = true;
-		public bool ExtendedFFToolsLogging;
-		public bool IgnoreBlackPixels;
-		public bool IgnoreWhitePixels;
 
-		public FFTools.FFHardwareAccelerationMode HardwareAccelerationMode;
-
-		public byte Threshhold = 5;
-		public float Percent = 96f;
-
-		public int ThumbnailCount = 1;
-		public int MaxDegreeOfParallelism = 1;
-
-		public string CustomFFArguments = string.Empty;
+	[ProtoContract]
+	public class FileEntry_old {
+#pragma warning disable CS8618 // Non-nullable field is uninitialized.
+		protected FileEntry_old() { }
+#pragma warning restore CS8618 // Non-nullable field is uninitialized.
+		[ProtoMember(1)]
+		public string Path { get; set; }
+		[ProtoMember(4)]
+		public MediaInfo? mediaInfo;
+		[ProtoMember(5)]
+		public EntryFlags Flags;
 	}
 }

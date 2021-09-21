@@ -14,19 +14,19 @@
 // */
 //
 
-using System;
-using System.Reactive;
-using System.Threading.Tasks;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
-using ReactiveUI;
+using VDF.GUI.Data;
+using VDF.GUI.ViewModels;
 
 namespace VDF.GUI.Views {
 
 	public static class MessageBoxService {
 		public static async Task<MessageBoxButtons> Show(string message, MessageBoxButtons buttons = MessageBoxButtons.Ok,
 			string title = null) {
+			while (ApplicationHelpers.MainWindow == null) {
+				await Task.Delay(500);
+			}
 			var dlg = new MessageBoxView(message, buttons, title) {
 				Icon = ApplicationHelpers.MainWindow.Icon
 			};
@@ -38,10 +38,9 @@ namespace VDF.GUI.Views {
 
 	public class MessageBoxView : Window {
 
-		public MessageBoxView() {
-			//Designer need this
-			InitializeComponent();
-		}
+		//Designer need this
+		public MessageBoxView() => InitializeComponent();
+
 		public MessageBoxView(string message, MessageBoxButtons buttons = MessageBoxButtons.Ok, string title = null) {
 
 			DataContext = new MessageBoxVM();
@@ -57,57 +56,8 @@ namespace VDF.GUI.Views {
 			InitializeComponent();
 
 		}
-		private void InitializeComponent() {
-			AvaloniaXamlLoader.Load(this);
-		}
+		private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 	}
 
-	[Flags]
-	public enum MessageBoxButtons {
-		None = 0,
-		Ok = 1,
-		Cancel = 2,
-		Yes = 4,
-		No = 8
-	}
 
-	public sealed class MessageBoxVM : ReactiveObject {
-
-		public MessageBoxView host;
-
-		bool _HasOKButton;
-		public bool HasOKButton {
-			get => _HasOKButton;
-			set => this.RaiseAndSetIfChanged(ref _HasOKButton, value);
-		}
-		bool _HasYesButton;
-		public bool HasYesButton {
-			get => _HasYesButton;
-			set => this.RaiseAndSetIfChanged(ref _HasYesButton, value);
-		}
-		bool _HasNoButton;
-		public bool HasNoButton {
-			get => _HasNoButton;
-			set => this.RaiseAndSetIfChanged(ref _HasNoButton, value);
-		}
-		bool _HasCancelButton;
-		public bool HasCancelButton {
-			get => _HasCancelButton;
-			set => this.RaiseAndSetIfChanged(ref _HasCancelButton, value);
-		}
-		public string Message { get; set; }
-		public string Title { get; set; } = "Video Duplicate Finder";
-		public ReactiveCommand<Unit, Unit> OKCommand => ReactiveCommand.Create(() => {
-			host.Close(MessageBoxButtons.Ok);
-		});
-		public ReactiveCommand<Unit, Unit> YesCommand => ReactiveCommand.Create(() => {
-			host.Close(MessageBoxButtons.Yes);
-		});
-		public ReactiveCommand<Unit, Unit> NoCommand => ReactiveCommand.Create(() => {
-			host.Close(MessageBoxButtons.No);
-		});
-		public ReactiveCommand<Unit, Unit> CancelCommand => ReactiveCommand.Create(() => {
-			host.Close(MessageBoxButtons.Cancel);
-		});
-	}
 }

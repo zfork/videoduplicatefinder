@@ -24,8 +24,8 @@ namespace VDF.GUI {
 			(IClassicDesktopStyleApplicationLifetime)Application.Current.ApplicationLifetime;
 		public static MainWindow MainWindow =>
 			(MainWindow)((IClassicDesktopStyleApplicationLifetime)Application.Current.ApplicationLifetime).MainWindow;
-		public static ViewModels.MainWindowViewModel MainWindowDataContext =>
-			(ViewModels.MainWindowViewModel)MainWindow.DataContext;
+		public static ViewModels.MainWindowVM MainWindowDataContext =>
+			(ViewModels.MainWindowVM)MainWindow.DataContext;
 
 	}
 }

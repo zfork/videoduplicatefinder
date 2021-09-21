@@ -33,39 +33,43 @@ using VDF.GUI.Data;
 using VDF.GUI.Views;
 using System.ComponentModel;
 using System.Text.Json;
+using System.Linq;
+using System.Text.Json.Serialization;
+using System.Collections.Specialized;
 
 namespace VDF.GUI.ViewModels {
-	public class MainWindowViewModel : ReactiveObject {
-		public ScanEngine Scanner { get; } = new ScanEngine();
-		public ObservableCollection<string> LogItems { get; } = new ObservableCollection<string>();
-		public ObservableCollection<string> Includes { get; } = new ObservableCollection<string>();
-		public ObservableCollection<string> Blacklists { get; } = new ObservableCollection<string>();
-
+	public class MainWindowVM : ReactiveObject {
+		public ScanEngine Scanner { get; } = new();
+		public ObservableCollection<string> LogItems { get; } = new();
+		public ObservableCollection<string> Includes { get; } = new();
+		public ObservableCollection<string> Blacklists { get; } = new();
+		List<HashSet<string>> GroupBlacklist = new();
+		public string BackupScanResultsFile => Path.Combine(CoreUtils.CurrentFolder, "backup.scanresults");
 
 		[CanBeNull] DataGridCollectionView view;
-		ObservableCollection<DuplicateItemViewModel> Duplicates { get; } = new ObservableCollection<DuplicateItemViewModel>();
+		ObservableCollection<DuplicateItemVM> Duplicates { get; } = new();
 		public KeyValuePair<string, DataGridSortDescription>[] SortOrders { get; } = {
 			new KeyValuePair<string, DataGridSortDescription>("None", null),
 			new KeyValuePair<string, DataGridSortDescription>("Size Ascending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.SizeLong)}", ListSortDirection.Ascending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.SizeLong)}", ListSortDirection.Ascending)),
 			new KeyValuePair<string, DataGridSortDescription>("Size Descending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.SizeLong)}", ListSortDirection.Descending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.SizeLong)}", ListSortDirection.Descending)),
 			new KeyValuePair<string, DataGridSortDescription>("Resolution Ascending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.FrameSizeInt)}", ListSortDirection.Ascending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.FrameSizeInt)}", ListSortDirection.Ascending)),
 			new KeyValuePair<string, DataGridSortDescription>("Resolution Descending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.FrameSizeInt)}", ListSortDirection.Descending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.FrameSizeInt)}", ListSortDirection.Descending)),
 			new KeyValuePair<string, DataGridSortDescription>("Duration Ascending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.Duration)}", ListSortDirection.Ascending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.Duration)}", ListSortDirection.Ascending)),
 			new KeyValuePair<string, DataGridSortDescription>("Duration Descending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.Duration)}", ListSortDirection.Descending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.Duration)}", ListSortDirection.Descending)),
 			new KeyValuePair<string, DataGridSortDescription>("Date Created Ascending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.DateCreated)}", ListSortDirection.Ascending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.DateCreated)}", ListSortDirection.Ascending)),
 			new KeyValuePair<string, DataGridSortDescription>("Date Created Descending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.DateCreated)}", ListSortDirection.Descending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.DateCreated)}", ListSortDirection.Descending)),
 			new KeyValuePair<string, DataGridSortDescription>("Similarity Ascending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.Similarity)}", ListSortDirection.Ascending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.Similarity)}", ListSortDirection.Ascending)),
 			new KeyValuePair<string, DataGridSortDescription>("Similarity Descending",
-				DataGridSortDescription.FromPath($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.Similarity)}", ListSortDirection.Descending)),
+				DataGridSortDescription.FromPath($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.Similarity)}", ListSortDirection.Descending)),
 		};
 		public KeyValuePair<string, FileTypeFilter>[] TypeFilters { get; } = {
 			new KeyValuePair<string, FileTypeFilter>("All",  FileTypeFilter.All),
@@ -77,6 +81,11 @@ namespace VDF.GUI.ViewModels {
 		public string SearchText {
 			get => _SearchText;
 			set => this.RaiseAndSetIfChanged(ref _SearchText, value);
+		}
+		string _CustomFFArguments = string.Empty;
+		public string CustomFFArguments {
+			get => _CustomFFArguments;
+			set => this.RaiseAndSetIfChanged(ref _CustomFFArguments, value);
 		}
 		bool _IsScanning;
 		public bool IsScanning {
@@ -99,12 +108,30 @@ namespace VDF.GUI.ViewModels {
 			get => _IgnoreHardlinks;
 			set => this.RaiseAndSetIfChanged(ref _IgnoreHardlinks, value);
 		}
-		bool _UseCuda;
-		public bool UseCuda {
-			get => _UseCuda;
-			set => this.RaiseAndSetIfChanged(ref _UseCuda, value);
+		bool _IgnoreBlackPixels;
+		public bool IgnoreBlackPixels {
+			get => _IgnoreBlackPixels;
+			set => this.RaiseAndSetIfChanged(ref _IgnoreBlackPixels, value);
 		}
-
+		bool _IgnoreWhitePixels;
+		public bool IgnoreWhitePixels {
+			get => _IgnoreWhitePixels;
+			set => this.RaiseAndSetIfChanged(ref _IgnoreWhitePixels, value);
+		}
+		int _MaxDegreeOfParallelism = 1;
+		public int MaxDegreeOfParallelism {
+			get => _MaxDegreeOfParallelism;
+			set => this.RaiseAndSetIfChanged(ref _MaxDegreeOfParallelism, value);
+		}
+#pragma warning disable CA1822 // Mark members as static => It's used by Avalonia binding
+		public IEnumerable<Core.FFTools.FFHardwareAccelerationMode> HardwareAccelerationModes =>
+#pragma warning restore CA1822 // Mark members as static
+			Enum.GetValues<Core.FFTools.FFHardwareAccelerationMode>();
+		Core.FFTools.FFHardwareAccelerationMode _HardwareAccelerationMode = Core.FFTools.FFHardwareAccelerationMode.auto;
+		public Core.FFTools.FFHardwareAccelerationMode HardwareAccelerationMode {
+			get => _HardwareAccelerationMode;
+			set => this.RaiseAndSetIfChanged(ref _HardwareAccelerationMode, value);
+		}
 		bool _IncludeSubDirectories = true;
 		public bool IncludeSubDirectories {
 			get => _IncludeSubDirectories;
@@ -119,6 +146,16 @@ namespace VDF.GUI.ViewModels {
 		public bool GeneratePreviewThumbnails {
 			get => _GeneratePreviewThumbnails;
 			set => this.RaiseAndSetIfChanged(ref _GeneratePreviewThumbnails, value);
+		}
+		bool _ExtendedFFToolsLogging;
+		public bool ExtendedFFToolsLogging {
+			get => _ExtendedFFToolsLogging;
+			set => this.RaiseAndSetIfChanged(ref _ExtendedFFToolsLogging, value);
+		}
+		bool _UseNativeFfmpegBinding;
+		public bool UseNativeFfmpegBinding {
+			get => _UseNativeFfmpegBinding;
+			set => this.RaiseAndSetIfChanged(ref _UseNativeFfmpegBinding, value);
 		}
 		string _ScanProgressText;
 		public string ScanProgressText {
@@ -140,6 +177,11 @@ namespace VDF.GUI.ViewModels {
 		public int ScanProgressValue {
 			get => _ScanProgressValue;
 			set => this.RaiseAndSetIfChanged(ref _ScanProgressValue, value);
+		}
+		bool _BackupAfterListChanged = true;
+		public bool BackupAfterListChanged {
+			get => _BackupAfterListChanged;
+			set => this.RaiseAndSetIfChanged(ref _BackupAfterListChanged, value);
 		}
 		bool _IsBusy;
 		public bool IsBusy {
@@ -166,6 +208,35 @@ namespace VDF.GUI.ViewModels {
 			get => _Thumbnails;
 			set => this.RaiseAndSetIfChanged(ref _Thumbnails, value);
 		}
+		int _TotalDuplicates;
+		public int TotalDuplicates {
+			get => _TotalDuplicates;
+			set => this.RaiseAndSetIfChanged(ref _TotalDuplicates, value);
+		}
+		int _TotalDuplicateGroups;
+		public int TotalDuplicateGroups {
+			get => _TotalDuplicateGroups;
+			set => this.RaiseAndSetIfChanged(ref _TotalDuplicateGroups, value);
+		}
+		string _TotalDuplicatesSize;
+		public string TotalDuplicatesSize {
+			get => _TotalDuplicatesSize;
+			set => this.RaiseAndSetIfChanged(ref _TotalDuplicatesSize, value);
+		}
+		long _TotalSizeRemovedInternal;
+		long TotalSizeRemovedInternal {
+			get => _TotalSizeRemovedInternal;
+			set {
+				_TotalSizeRemovedInternal = value;
+				this.RaisePropertyChanged(nameof(TotalSizeRemoved));
+			}
+		}
+		int _DuplicatesSelectedCounter;
+		public int DuplicatesSelectedCounter {
+			get => _DuplicatesSelectedCounter;
+			set => this.RaiseAndSetIfChanged(ref _DuplicatesSelectedCounter, value);
+		}
+		public string TotalSizeRemoved => TotalSizeRemovedInternal.BytesToString();
 #if DEBUG
 		public static bool IsDebug => true;
 #else
@@ -192,7 +263,8 @@ namespace VDF.GUI.ViewModels {
 				_SortOrder = value;
 				this.RaisePropertyChanged(nameof(SortOrder));
 				view?.SortDescriptions.Clear();
-				view?.SortDescriptions.Add(_SortOrder.Value);
+				if (_SortOrder.Value != null)
+					view?.SortDescriptions.Add(_SortOrder.Value);
 				view?.Refresh();
 			}
 		}
@@ -207,10 +279,15 @@ namespace VDF.GUI.ViewModels {
 				view?.Refresh();
 			}
 		}
-		public MainWindowViewModel() {
+		public MainWindowVM() {
 			var dir = new DirectoryInfo(Utils.ImageUtils.ThumbnailDirectory);
 			if (!dir.Exists)
 				dir.Create();
+			FileInfo groupBlacklistFile = new(FileUtils.SafePathCombine(CoreUtils.CurrentFolder, "BlacklistedGroups.json"));
+			if (groupBlacklistFile.Exists && groupBlacklistFile.Length > 0) {
+				using var stream = new FileStream(groupBlacklistFile.FullName, FileMode.Open);
+				GroupBlacklist = JsonSerializer.Deserialize<List<HashSet<string>>>(stream);
+			}
 			_FileType = TypeFilters[0];
 			_SortOrder = SortOrders[0];
 			Scanner.ScanDone += Scanner_ScanDone;
@@ -218,10 +295,37 @@ namespace VDF.GUI.ViewModels {
 			Scanner.ThumbnailsRetrieved += Scanner_ThumbnailsRetrieved;
 			Scanner.DatabaseCleaned += Scanner_DatabaseCleaned;
 			Scanner.FilesEnumerated += Scanner_FilesEnumerated;
+			try {
+				File.Delete(Path.Combine(CoreUtils.CurrentFolder, "log.txt"));
+			}
+			catch { }
 			Logger.Instance.LogItemAdded += Instance_LogItemAdded;
 			//Ensure items added before GUI was ready will be shown 
 			Instance_LogItemAdded(string.Empty);
+			if (File.Exists(BackupScanResultsFile))
+				ImportScanResultsIncludingThumbnails(BackupScanResultsFile);
 
+			Duplicates.CollectionChanged += Duplicates_CollectionChanged;
+
+		}
+
+		void Duplicates_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e) {
+			if (e.OldItems != null) {
+				foreach (INotifyPropertyChanged item in e.OldItems)
+					item.PropertyChanged -= DuplicateItemVM_PropertyChanged;
+			}
+			if (e.NewItems != null) {
+				foreach (INotifyPropertyChanged item in e.NewItems)
+					item.PropertyChanged += DuplicateItemVM_PropertyChanged;
+			}
+		}
+
+		void DuplicateItemVM_PropertyChanged(object sender, PropertyChangedEventArgs e) {
+			if (e.PropertyName != nameof(DuplicateItemVM.Checked)) return;
+			if (((DuplicateItemVM)sender).Checked)
+				DuplicatesSelectedCounter++;
+			else 
+				DuplicatesSelectedCounter--;
 		}
 
 		void Scanner_ThumbnailsRetrieved(object sender, EventArgs e) {
@@ -230,6 +334,9 @@ namespace VDF.GUI.ViewModels {
 			RemainingTime = new TimeSpan();
 			ScanProgressValue = 0;
 			ScanProgressMaxValue = 100;
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+			ExportScanResultsIncludingThumbnails(BackupScanResultsFile);
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
 		}
 
 		void Scanner_FilesEnumerated(object sender, EventArgs e) => IsBusy = false;
@@ -239,33 +346,57 @@ namespace VDF.GUI.ViewModels {
 			await MessageBoxService.Show("Database cleaned!");
 		}
 
-		public void SaveSettings() {
-			var path = FileUtils.SafePathCombine(CoreUtils.CurrentFolder, "Settings.xml");
+		public async Task<bool> SaveScanResults() {
+			if (Duplicates.Count == 0) {
+				//Otherwise an exception is thrown when calling ApplicationHelpers.CurrentApplicationLifetime.Shutdown();
+				await Task.Delay(100);
+				return true;
+			}
+			var result = await MessageBoxService.Show("Do you want to save the results and continue next time you start VDF?",
+				MessageBoxButtons.Yes | MessageBoxButtons.No);
+			if (result == MessageBoxButtons.No) {
+				//Otherwise an exception is thrown when calling ApplicationHelpers.CurrentApplicationLifetime.Shutdown();
+				await Task.Delay(100);
+				return true;
+			}
+			await ExportScanResultsIncludingThumbnails(BackupScanResultsFile);
+			return true;
+		}
+		public void SaveSettings(string? path = null) {
+			path ??= FileUtils.SafePathCombine(CoreUtils.CurrentFolder, "Settings.xml");
 			var includes = new object[Includes.Count];
-			for (var i = 0; i < Includes.Count; i++) {
+			for (int i = 0; i < Includes.Count; i++) {
 				includes[i] = new XElement("Include", Includes[i]);
 			}
 			var excludes = new object[Blacklists.Count];
-			for (var i = 0; i < Blacklists.Count; i++) {
+			for (int i = 0; i < Blacklists.Count; i++) {
 				excludes[i] = new XElement("Exclude", Blacklists[i]);
 			}
 
-			var xDoc = new XDocument(new XElement("Settings",
+			XDocument xDoc = new(new XElement("Settings",
 					new XElement("Includes", includes),
 					new XElement("Excludes", excludes),
 					new XElement("Percent", Percent),
 					new XElement("Thumbnails", Thumbnails),
 					new XElement("IncludeSubDirectories", IncludeSubDirectories),
 					new XElement("IncludeImages", IncludeImages),
+					new XElement("IgnoreHardlinks", IgnoreHardlinks),
 					new XElement("IgnoreReadOnlyFolders", IgnoreReadOnlyFolders),
-					new XElement("UseCuda", UseCuda),
-					new XElement("GeneratePreviewThumbnails", GeneratePreviewThumbnails)
+					new XElement("HardwareAccelerationMode", HardwareAccelerationMode),
+					new XElement("MaxDegreeOfParallelism", MaxDegreeOfParallelism),
+					new XElement("GeneratePreviewThumbnails", GeneratePreviewThumbnails),
+					new XElement("ExtendedFFToolsLogging", ExtendedFFToolsLogging),
+					new XElement("BackupAfterListChanged", BackupAfterListChanged),
+					new XElement("CustomFFArguments", CustomFFArguments),
+					new XElement("IgnoreBlackPixels", IgnoreBlackPixels),
+					new XElement("IgnoreWhitePixels", IgnoreWhitePixels),
+					new XElement("UseNativeFfmpegBinding", UseNativeFfmpegBinding)
 				)
 			);
 			xDoc.Save(path);
 		}
-		public void LoadSettings() {
-			var path = FileUtils.SafePathCombine(CoreUtils.CurrentFolder, "Settings.xml");
+		public void LoadSettings(string? path = null) {
+			path ??= FileUtils.SafePathCombine(CoreUtils.CurrentFolder, "Settings.xml");
 			if (!File.Exists(path)) return;
 			var xDoc = XDocument.Load(path);
 			foreach (var n in xDoc.Descendants("Include"))
@@ -273,26 +404,53 @@ namespace VDF.GUI.ViewModels {
 			foreach (var n in xDoc.Descendants("Exclude"))
 				Blacklists.Add(n.Value);
 			foreach (var n in xDoc.Descendants("Percent"))
-				if (int.TryParse(n.Value, out var percent))
-					Percent = percent;
+				if (int.TryParse(n.Value, out var value))
+					Percent = value;
+			foreach (var n in xDoc.Descendants("MaxDegreeOfParallelism"))
+				if (int.TryParse(n.Value, out var value))
+					MaxDegreeOfParallelism = value;
 			foreach (var n in xDoc.Descendants("Thumbnails"))
-				if (int.TryParse(n.Value, out var thumbnails))
-					Thumbnails = thumbnails;
-			var node = xDoc.Descendants("IncludeSubDirectories").SingleOrDefault();
-			if (node?.Value != null)
-				IncludeSubDirectories = bool.Parse(node.Value);
-			node = xDoc.Descendants("IncludeImages").SingleOrDefault();
-			if (node?.Value != null)
-				IncludeImages = bool.Parse(node.Value);
-			node = xDoc.Descendants("IgnoreReadOnlyFolders").SingleOrDefault();
-			if (node?.Value != null)
-				IgnoreReadOnlyFolders = bool.Parse(node.Value);
-			node = xDoc.Descendants("UseCuda").SingleOrDefault();
-			if (node?.Value != null)
-				UseCuda = bool.Parse(node.Value);
-			node = xDoc.Descendants("GeneratePreviewThumbnails").SingleOrDefault();
-			if (node?.Value != null)
-				GeneratePreviewThumbnails = bool.Parse(node.Value);
+				if (int.TryParse(n.Value, out var value))
+					Thumbnails = value;
+			foreach (var n in xDoc.Descendants("IncludeSubDirectories"))
+				if (bool.TryParse(n.Value, out var value))
+					IncludeSubDirectories = value;
+			foreach (var n in xDoc.Descendants("IncludeImages"))
+				if (bool.TryParse(n.Value, out var value))
+					IncludeImages = value;
+			foreach (var n in xDoc.Descendants("IgnoreReadOnlyFolders"))
+				if (bool.TryParse(n.Value, out var value))
+					IgnoreReadOnlyFolders = value;
+			//09.03.21: UseCuda is obsolete and has been replaced with UseHardwareAcceleration.
+			foreach (var n in xDoc.Descendants("UseCuda"))
+				if (bool.TryParse(n.Value, out var value))
+					HardwareAccelerationMode = value ? Core.FFTools.FFHardwareAccelerationMode.auto : Core.FFTools.FFHardwareAccelerationMode.none;
+			foreach (var n in xDoc.Descendants("HardwareAccelerationMode"))
+				if (Enum.TryParse<Core.FFTools.FFHardwareAccelerationMode>(n.Value, out var value))
+					HardwareAccelerationMode = value;
+			foreach (var n in xDoc.Descendants("GeneratePreviewThumbnails"))
+				if (bool.TryParse(n.Value, out var value))
+					GeneratePreviewThumbnails = value;
+			foreach (var n in xDoc.Descendants("IgnoreHardlinks"))
+				if (bool.TryParse(n.Value, out var value))
+					IgnoreHardlinks = value;
+			foreach (var n in xDoc.Descendants("ExtendedFFToolsLogging"))
+				if (bool.TryParse(n.Value, out var value))
+					ExtendedFFToolsLogging = value;
+			foreach (var n in xDoc.Descendants("UseNativeFfmpegBinding"))
+				if (bool.TryParse(n.Value, out var value))
+					UseNativeFfmpegBinding = value;
+			foreach (var n in xDoc.Descendants("BackupAfterListChanged"))
+				if (bool.TryParse(n.Value, out var value))
+					BackupAfterListChanged = value;
+			foreach (var n in xDoc.Descendants("IgnoreBlackPixels"))
+				if (bool.TryParse(n.Value, out var value))
+					IgnoreBlackPixels = value;
+			foreach (var n in xDoc.Descendants("IgnoreWhitePixels"))
+				if (bool.TryParse(n.Value, out var value))
+					IgnoreWhitePixels = value;
+			foreach (var n in xDoc.Descendants("CustomFFArguments"))
+				CustomFFArguments = n.Value;
 		}
 
 		public async void LoadDatabase() {
@@ -321,26 +479,49 @@ namespace VDF.GUI.ViewModels {
 				LogItems.Add(message);
 			});
 
-		void Scanner_ScanDone(object sender, EventArgs e) {
+		void Scanner_ScanDone(object sender, EventArgs e) =>
 			Dispatcher.UIThread.InvokeAsync(() => {
 				IsScanning = false;
 				IsBusy = false;
 
+				Scanner.Duplicates.RemoveWhere(a => {
+					foreach (HashSet<string> blackListedGroup in GroupBlacklist) {
+						if (!blackListedGroup.Contains(a.Path)) continue;
+						bool isBlacklisted = true;
+						foreach (DuplicateItem blackListItem in Scanner.Duplicates.Where(b => b.GroupId == a.GroupId)) {
+							if (!blackListedGroup.Contains(blackListItem.Path)) {
+								isBlacklisted = false;
+								break;
+							}
+						}
+						if (isBlacklisted) return true;
+					}
+					return false;
+				});
+
+
 				foreach (var item in Scanner.Duplicates) {
-					Duplicates.Add(new DuplicateItemViewModel(item));
+					Duplicates.Add(new DuplicateItemVM(item));
 				}
 
 				if (GeneratePreviewThumbnails)
 					Scanner.RetrieveThumbnails();
 
-				view = new DataGridCollectionView(Duplicates);
-				view.GroupDescriptions.Add(new DataGridPathGroupDescription($"{nameof(DuplicateItemViewModel.ItemInfo)}.{nameof(DuplicateItem.GroupId)}"));
-				view.Filter += TextFilter;
-				GetDataGrid.Items = view;
+				BuildDuplicatesView();
 			});
+		void BuildDuplicatesView() {
+			view = new DataGridCollectionView(Duplicates);
+			view.GroupDescriptions.Add(new DataGridPathGroupDescription($"{nameof(DuplicateItemVM.ItemInfo)}.{nameof(DuplicateItem.GroupId)}"));
+			view.Filter += TextFilter;
+			GetDataGrid.Items = view;
+
+			TotalDuplicates = Duplicates.Count;
+			TotalDuplicatesSize = Duplicates.Sum(x => x.ItemInfo.SizeLong).BytesToString();
+			TotalSizeRemovedInternal = 0;
+			TotalDuplicateGroups = Duplicates.GroupBy(x => x.ItemInfo.GroupId).Count();
 		}
 		bool TextFilter(object obj) {
-			if (obj is not DuplicateItemViewModel data) return false;
+			if (obj is not DuplicateItemVM data) return false;
 			var success = true;
 			if (!string.IsNullOrEmpty(FilterByPath)) {
 				success = data.ItemInfo.Path.Contains(FilterByPath, StringComparison.OrdinalIgnoreCase);
@@ -385,18 +566,26 @@ namespace VDF.GUI.ViewModels {
 			IsBusyText = "Cleaning database...";
 			Scanner.CleanupDatabase();
 		});
-		public ReactiveCommand<Unit, Unit> ExportDataBaseToJsonCommand => ReactiveCommand.Create(() => {
-			ExportToJson(new JsonSerializerOptions {
+		public ReactiveCommand<Unit, Unit> ClearDatabaseCommand => ReactiveCommand.CreateFromTask(async () => {
+			MessageBoxButtons dlgResult = await MessageBoxService.Show(
+				"WARNING: This will delete all stored data in your database. Do you want to continue?",
+				MessageBoxButtons.Yes | MessageBoxButtons.No);
+			if (dlgResult == MessageBoxButtons.No) return;
+			ScanEngine.ClearDatabase();
+			await MessageBoxService.Show("Done!");
+		});
+		public static ReactiveCommand<Unit, Unit> ExportDataBaseToJsonCommand => ReactiveCommand.Create(() => {
+			ExportDbToJson(new JsonSerializerOptions {
 				IncludeFields = true,
 			});
 		});
-		public ReactiveCommand<Unit, Unit> ExportDataBaseToJsonPrettyCommand => ReactiveCommand.Create(() => {
-			ExportToJson(new JsonSerializerOptions {
+		public static ReactiveCommand<Unit, Unit> ExportDataBaseToJsonPrettyCommand => ReactiveCommand.Create(() => {
+			ExportDbToJson(new JsonSerializerOptions {
 				IncludeFields = true,
 				WriteIndented = true,
 			});
 		});
-		async static void ExportToJson(JsonSerializerOptions options) {
+		async static void ExportDbToJson(JsonSerializerOptions options) {
 
 			List<FileDialogFilter> filterList = new(1);
 			filterList.Add(new FileDialogFilter {
@@ -413,7 +602,117 @@ namespace VDF.GUI.ViewModels {
 			if (!ScanEngine.ExportDataBaseToJson(result, options))
 				await MessageBoxService.Show("Exporting database has failed, please see log");
 		}
-		public static ReactiveCommand<DuplicateItemViewModel, Unit> OpenItemCommand => ReactiveCommand.Create<DuplicateItemViewModel>(currentItem => {
+		public ReactiveCommand<Unit, Unit> ExportScanResultsCommand => ReactiveCommand.Create(() => {
+			ExportScanResultsToJson(new JsonSerializerOptions {
+				IncludeFields = true,
+			});
+		});
+		public ReactiveCommand<Unit, Unit> ExportScanResultsPrettyCommand => ReactiveCommand.Create(() => {
+			ExportScanResultsToJson(new JsonSerializerOptions {
+				IncludeFields = true,
+				WriteIndented = true,
+			});
+		});
+		async void ExportScanResultsToJson(JsonSerializerOptions options) {
+			string path = await new SaveFileDialog {
+				DefaultExtension = ".json",
+				Filters = new List<FileDialogFilter> { new FileDialogFilter {
+					Name = "Json Files",
+					Extensions = new List<string>() { "json" }
+					}
+				}
+			}.ShowAsync(ApplicationHelpers.MainWindow);
+			if (string.IsNullOrEmpty(path)) return;
+
+
+			try {
+				List<DuplicateItem> list = Duplicates.Select(x => x.ItemInfo).OrderBy(x => x.GroupId).ToList();
+				using var stream = File.OpenWrite(path);
+				await JsonSerializer.SerializeAsync(stream, list, options);
+				stream.Close();
+			}
+			catch (Exception ex) {
+				await MessageBoxService.Show($"Exporting scan results has failed because of {ex}");
+			}
+		}
+		public ReactiveCommand<Unit, Unit> ExportScanResultsToFileCommand => ReactiveCommand.CreateFromTask(async () => {
+			await ExportScanResultsIncludingThumbnails();
+		});
+		async Task ExportScanResultsIncludingThumbnails(string? path = null) {
+			path ??= await new SaveFileDialog {
+				DefaultExtension = ".scanresults",
+				Filters = new List<FileDialogFilter> { new FileDialogFilter {
+					Name = "Scan Results",
+					Extensions = new List<string>() { "scanresults" }
+					}
+				}
+			}.ShowAsync(ApplicationHelpers.MainWindow);
+			if (string.IsNullOrEmpty(path)) return;
+
+			try {
+				using var stream = File.OpenWrite(path);
+				var options = new JsonSerializerOptions {
+					IncludeFields = true,
+				};
+				options.Converters.Add(new BitmapJsonConverter());
+				IsBusy = true;
+				IsBusyText = "Saving scan results to disk...";
+				await JsonSerializer.SerializeAsync(stream, Duplicates, options);
+				IsBusy = false;
+				stream.Close();
+			}
+			catch (Exception ex) {
+				IsBusy = false;
+				string error = $"Exporting scan results has failed because of {ex}";
+				Logger.Instance.Info(error);
+				await MessageBoxService.Show(error);
+			}
+		}
+		async void ImportScanResultsIncludingThumbnails(string? path = null) {
+			if (Duplicates.Count > 0) {
+				MessageBoxButtons result = await MessageBoxService.Show($"Importing scan results will clear the current list, continue?", MessageBoxButtons.Yes | MessageBoxButtons.No);
+				if (result == MessageBoxButtons.No) return;
+			}
+
+			if (path == null) {
+				var paths = await new OpenFileDialog {
+					Filters = new List<FileDialogFilter> { new FileDialogFilter {
+					Name = "Scan Results",
+					Extensions = new List<string>() { "scanresults" }
+						}
+					}
+				}.ShowAsync(ApplicationHelpers.MainWindow);
+				if (paths.Length == 0) return;
+				path = paths[0];
+			}
+			if (string.IsNullOrEmpty(path)) return;
+
+			try {
+				using var stream = File.OpenRead(path);
+				var options = new JsonSerializerOptions {
+					IncludeFields = true,
+				};
+				options.Converters.Add(new BitmapJsonConverter());
+				IsBusy = true;
+				IsBusyText = "Importing scan results from disk...";
+				var list = await JsonSerializer.DeserializeAsync<List<DuplicateItemVM>>(stream, options);
+				Duplicates.Clear();
+				foreach (var dupItem in list) {
+					Duplicates.Add(dupItem);
+				}
+				BuildDuplicatesView();
+				IsBusy = false;
+				stream.Close();
+			}
+			catch (Exception ex) {
+				IsBusy = false;
+				string error = $"Importing scan results has failed because of {ex}";
+				Logger.Instance.Info(error);
+				await MessageBoxService.Show(error);
+			}
+		}
+
+		public static ReactiveCommand<DuplicateItemVM, Unit> OpenItemCommand => ReactiveCommand.Create<DuplicateItemVM>(currentItem => {
 			if (CoreUtils.IsWindows) {
 				Process.Start(new ProcessStartInfo {
 					FileName = currentItem.ItemInfo.Path,
@@ -429,7 +728,7 @@ namespace VDF.GUI.ViewModels {
 			}
 		});
 		public static ReactiveCommand<Unit, Unit> OpenSelectedItemInFolderCommand => ReactiveCommand.Create(() => {
-			if (GetDataGrid.SelectedItem is not DuplicateItemViewModel currentItem) return;
+			if (GetDataGrid.SelectedItem is not DuplicateItemVM currentItem) return;
 			if (CoreUtils.IsWindows) {
 				Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{currentItem.ItemInfo.Path}\"") {
 					UseShellExecute = true
@@ -444,7 +743,7 @@ namespace VDF.GUI.ViewModels {
 			}
 		});
 		public static ReactiveCommand<Unit, Unit> OpenItemInFolderCommand => ReactiveCommand.Create(() => {
-			if (GetDataGrid.SelectedItem is not DuplicateItemViewModel currentItem) return;
+			if (GetDataGrid.SelectedItem is not DuplicateItemVM currentItem) return;
 
 			if (CoreUtils.IsWindows) {
 				Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{currentItem.ItemInfo.Path}\"") {
@@ -460,18 +759,21 @@ namespace VDF.GUI.ViewModels {
 			}
 		});
 		public static ReactiveCommand<Unit, Unit> RenameFileCommand => ReactiveCommand.CreateFromTask(async () => {
-			if (GetDataGrid.SelectedItem is not DuplicateItemViewModel currentItem) return;
+			if (GetDataGrid.SelectedItem is not DuplicateItemVM currentItem) return;
 			var fi = new FileInfo(currentItem.ItemInfo.Path);
 			Debug.Assert(fi.Directory != null, "fi.Directory != null");
-			//TODO: Create an input dialog
-			var result = await new SaveFileDialog {
-				Title = "Enter new name",
-				Directory = fi.Directory.FullName
-			}.ShowAsync(ApplicationHelpers.MainWindow);
-			if (string.IsNullOrEmpty(result)) return;
-			fi.MoveTo(result);
-			currentItem.ChangePath(result);
+			string newName = await InputBoxService.Show("Enter new name", fi.Name, title: "Rename File");
+			if (string.IsNullOrEmpty(newName)) return;
+			newName = FileUtils.SafePathCombine(fi.DirectoryName, newName);
+			fi.MoveTo(newName);
+			currentItem.ItemInfo.Path = newName;
 		});
+
+		public static ReactiveCommand<Unit, Unit> ToggleCheckboxCommand => ReactiveCommand.Create(() => {
+			if (GetDataGrid.SelectedItem is not DuplicateItemVM currentItem) return;
+			currentItem.Checked = !currentItem.Checked;
+		});
+
 		public ReactiveCommand<ListBox, Action> RemoveIncludesFromListCommand => ReactiveCommand.Create<ListBox, Action>(lbox => {
 			while (lbox.SelectedItems.Count > 0)
 				Includes.Remove((string)lbox.SelectedItems[0]);
@@ -508,7 +810,31 @@ namespace VDF.GUI.ViewModels {
 				Logger.Instance.Info(e.Message);
 			}
 		});
-
+		public ReactiveCommand<Unit, Unit> SaveSettingsProfileCommand => ReactiveCommand.CreateFromTask(async () => {
+			var result = await new SaveFileDialog {
+				Directory = CoreUtils.CurrentFolder,
+				DefaultExtension = ".xml",
+				Filters = new List<FileDialogFilter> { new FileDialogFilter {
+					Extensions= new List<string> { "xml" },
+					Name = "Setting File"
+					}
+				}
+			}.ShowAsync(ApplicationHelpers.MainWindow);
+			if (string.IsNullOrEmpty(result)) return;
+			SaveSettings(result);
+		});
+		public ReactiveCommand<Unit, Unit> LoadSettingsProfileCommand => ReactiveCommand.CreateFromTask(async () => {
+			var result = await new OpenFileDialog {
+				Directory = CoreUtils.CurrentFolder,
+				Filters = new List<FileDialogFilter> { new FileDialogFilter {
+					Extensions= new List<string> { "xml" },
+					Name = "Setting File"
+					}
+				}
+			}.ShowAsync(ApplicationHelpers.MainWindow);
+			if (result == null || result.Length == 0 || string.IsNullOrEmpty(result[0])) return;
+			LoadSettings(result[0]);
+		});
 
 		public ReactiveCommand<Unit, Unit> StartScanCommand => ReactiveCommand.CreateFromTask(async () => {
 			if (!ScanEngine.FFmpegExists) {
@@ -519,6 +845,22 @@ namespace VDF.GUI.ViewModels {
 				await MessageBoxService.Show("Cannot find FFprobe. Please follow instructions on Github and restart VDF");
 				return;
 			}
+			if (UseNativeFfmpegBinding && !ScanEngine.NativeFFmpegExists) {
+				await MessageBoxService.Show("Cannot find shared FFmpeg libraries. Either uncheck 'Use native ffmpeg binding' in settings or please follow instructions on Github and restart VDF");
+				return;
+			}
+			if (UseNativeFfmpegBinding && HardwareAccelerationMode == Core.FFTools.FFHardwareAccelerationMode.auto) {
+				await MessageBoxService.Show("You cannot use hardware acceleration mode'auto' with native ffmpeg bindings. Please explicit set a mode or set it to 'none'.");
+				return;
+			}
+			if (Includes.Count == 0) {
+				await MessageBoxService.Show("There are no folders to scan. Please go to the settings and add at least one folder.");
+				return;
+			}
+			if (MaxDegreeOfParallelism == 0) {
+				await MessageBoxService.Show("MaxDegreeOfParallelism cannot be 0. Please go to the settings and change it.");
+				return;
+			}
 
 			Duplicates.Clear();
 			try {
@@ -527,18 +869,26 @@ namespace VDF.GUI.ViewModels {
 			}
 			catch (Exception e) {
 				Logger.Instance.Info(e.Message);
+				await MessageBoxService.Show("Failed to clean up the thumbnail directory. Please check log file.");
 				return;
 			}
 			IsScanning = true;
+			SaveSettings();
 			//Set scan settings
 			Scanner.Settings.IncludeSubDirectories = IncludeSubDirectories;
 			Scanner.Settings.IncludeImages = IncludeImages;
 			Scanner.Settings.GeneratePreviewThumbnails = GeneratePreviewThumbnails;
 			Scanner.Settings.IgnoreReadOnlyFolders = IgnoreReadOnlyFolders;
 			Scanner.Settings.IgnoreHardlinks = IgnoreHardlinks;
-			Scanner.Settings.UseCuda = UseCuda;
+			Scanner.Settings.HardwareAccelerationMode = HardwareAccelerationMode;
 			Scanner.Settings.Percent = Percent;
+			Scanner.Settings.MaxDegreeOfParallelism = MaxDegreeOfParallelism;
 			Scanner.Settings.ThumbnailCount = Thumbnails;
+			Scanner.Settings.ExtendedFFToolsLogging = ExtendedFFToolsLogging;
+			Scanner.Settings.CustomFFArguments = CustomFFArguments;
+			Scanner.Settings.UseNativeFfmpegBinding = UseNativeFfmpegBinding;
+			Scanner.Settings.IgnoreBlackPixels = IgnoreBlackPixels;
+			Scanner.Settings.IgnoreWhitePixels = IgnoreWhitePixels;
 			Scanner.Settings.IncludeList.Clear();
 			foreach (var s in Includes)
 				Scanner.Settings.IncludeList.Add(s);
@@ -576,10 +926,10 @@ namespace VDF.GUI.ViewModels {
 			foreach (var first in Duplicates) {
 				if (blackListGroupID.Contains(first.ItemInfo.GroupId)) continue; //Dup has been handled already
 
-				IEnumerable<DuplicateItemViewModel> l = Duplicates;
+				IEnumerable<DuplicateItemVM> l = Duplicates;
 				try {
 					var interpreter = new Interpreter().SetVariable("currentDuplicate", first).
-						ParseAsDelegate<Func<DuplicateItemViewModel, bool>>(currentExpression + " && !arg.ItemInfo.Path.Equals(currentDuplicate.ItemInfo.Path)");
+						ParseAsDelegate<Func<DuplicateItemVM, bool>>(currentExpression + " && !arg.ItemInfo.Path.Equals(currentDuplicate.ItemInfo.Path)");
 					l = l.Where(interpreter);
 				}
 				catch (ParseException e) {
@@ -587,7 +937,7 @@ namespace VDF.GUI.ViewModels {
 					return;
 				}
 
-				var dupMods = l as DuplicateItemViewModel[] ?? l.ToArray();
+				var dupMods = l as DuplicateItemVM[] ?? l.ToArray();
 				if (!dupMods.Any()) continue;
 				foreach (var dup in dupMods)
 					dup.Checked = true;
@@ -602,7 +952,7 @@ namespace VDF.GUI.ViewModels {
 
 				var l = Duplicates.Where(d => d.EqualsFull(first) && !d.ItemInfo.Path.Equals(first.ItemInfo.Path));
 
-				var dupMods = l as DuplicateItemViewModel[] ?? l.ToArray();
+				var dupMods = l as DuplicateItemVM[] ?? l.ToArray();
 				if (!dupMods.Any()) continue;
 				foreach (var dup in dupMods)
 					dup.Checked = true;
@@ -617,7 +967,7 @@ namespace VDF.GUI.ViewModels {
 			foreach (var first in Duplicates) {
 				if (blackListGroupID.Contains(first.ItemInfo.GroupId)) continue; //Dup has been handled already
 				var l = Duplicates.Where(d => d.EqualsButSize(first) && !d.ItemInfo.Path.Equals(first.ItemInfo.Path));
-				var dupMods = l as List<DuplicateItemViewModel> ?? l.ToList();
+				var dupMods = l as List<DuplicateItemVM> ?? l.ToList();
 				if (!dupMods.Any()) continue;
 				dupMods.Add(first);
 				dupMods = dupMods.OrderBy(s => s.ItemInfo.SizeLong).ToList();
@@ -635,30 +985,31 @@ namespace VDF.GUI.ViewModels {
 
 			foreach (var first in Duplicates) {
 				if (blackListGroupID.Contains(first.ItemInfo.GroupId)) continue; //Dup has been handled already
-				IEnumerable<DuplicateItemViewModel> l = Duplicates.Where(d => d.EqualsButQuality(first) && !d.ItemInfo.Path.Equals(first.ItemInfo.Path));
-				var dupMods = l as List<DuplicateItemViewModel> ?? l.ToList();
+				IEnumerable<DuplicateItemVM> l = Duplicates.Where(d => d.EqualsButQuality(first) && !d.ItemInfo.Path.Equals(first.ItemInfo.Path));
+				var dupMods = l as List<DuplicateItemVM> ?? l.ToList();
 				if (!dupMods.Any()) continue;
 				dupMods.Insert(0, first);
 
-				DuplicateItemViewModel keep = dupMods[0];
+				DuplicateItemVM keep = dupMods[0];
+
 				//Duration first
 				if (!keep.ItemInfo.IsImage)
 					keep = dupMods.OrderByDescending(d => d.ItemInfo.Duration).First();
 
-				//resolution next, but only when keep is unchanged
-				if (keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path))
+				//resolution next, but only when keep is unchanged, or when there was >=1 item with same quality
+				if (keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path) || dupMods.Count(d => d.ItemInfo.Duration == keep.ItemInfo.Duration) > 1)
 					keep = dupMods.OrderByDescending(d => d.ItemInfo.FrameSizeInt).First();
 
-				//fps next, but only when keep is unchanged
-				if (!keep.ItemInfo.IsImage && keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path))
+				//fps next, but only when keep is unchanged, or when there was >=1 item with same quality
+				if (!keep.ItemInfo.IsImage && (keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path) || dupMods.Count(d => d.ItemInfo.FrameSizeInt == keep.ItemInfo.FrameSizeInt) > 1))
 					keep = dupMods.OrderByDescending(d => d.ItemInfo.Fps).First();
 
-				//Bitrate next, but only when keep is unchanged
-				if (!keep.ItemInfo.IsImage && keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path))
+				//Bitrate next, but only when keep is unchanged, or when there was >=1 item with same quality
+				if (!keep.ItemInfo.IsImage && (keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path) || dupMods.Count(d => d.ItemInfo.Fps == keep.ItemInfo.Fps) > 1))
 					keep = dupMods.OrderByDescending(d => d.ItemInfo.BitRateKbs).First();
 
-				//Audio Bitrate next, but only when keep is unchanged
-				if (!keep.ItemInfo.IsImage && keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path))
+				//Audio Bitrate next, but only when keep is unchanged, or when there was >=1 item with same quality
+				if (!keep.ItemInfo.IsImage && (keep.ItemInfo.Path.Equals(dupMods[0].ItemInfo.Path) || dupMods.Count(d => d.ItemInfo.BitRateKbs == keep.ItemInfo.BitRateKbs) > 1))
 					keep = dupMods.OrderByDescending(d => d.ItemInfo.AudioSampleRate).First();
 
 				keep.Checked = false;
@@ -670,6 +1021,26 @@ namespace VDF.GUI.ViewModels {
 				blackListGroupID.Add(first.ItemInfo.GroupId);
 			}
 
+		});
+		public ReactiveCommand<Unit, Unit> MarkGroupAsNotAMatchCommand => ReactiveCommand.CreateFromTask(async () => {
+			if (GetDataGrid.SelectedItem is not DuplicateItemVM data) return;
+			HashSet<string> blacklist = new HashSet<string>();
+			foreach (DuplicateItemVM duplicateItem in Duplicates.Where(a => a.ItemInfo.GroupId == data.ItemInfo.GroupId))
+				blacklist.Add(duplicateItem.ItemInfo.Path);
+			GroupBlacklist.Add(blacklist);
+			try {
+				using var stream = new FileStream(FileUtils.SafePathCombine(CoreUtils.CurrentFolder,
+				"BlacklistedGroups.json"), FileMode.Create);
+				await JsonSerializer.SerializeAsync(stream, GroupBlacklist);
+			}
+			catch (Exception e) {
+				GroupBlacklist.Remove(blacklist);
+				await MessageBoxService.Show(e.Message);
+			}
+			for (var i = Duplicates.Count - 1; i >= 0; i--) {
+				if (!blacklist.Contains(Duplicates[i].ItemInfo.Path)) continue;
+				Duplicates.RemoveAt(i);
+			}
 		});
 		public ReactiveCommand<Unit, Unit> ClearSelectionCommand => ReactiveCommand.Create(() => {
 			for (var i = 0; i < Duplicates.Count; i++)
@@ -703,7 +1074,7 @@ namespace VDF.GUI.ViewModels {
 
 		async void DeleteInternal(bool fromDisk, bool blackList = false, bool createSymbolLinksInstead = false) {
 			if (Duplicates.Count == 0) return;
-			var dlgResult = await MessageBoxService.Show(
+			MessageBoxButtons dlgResult = await MessageBoxService.Show(
 				fromDisk
 					? $"Are you sure you want to{(CoreUtils.IsWindows ? " move" : " permanently delete")} the selected files{(CoreUtils.IsWindows ? " to recycle bin (only if supported, i.e. network files will be deleted instead)" : " from disk")}?"
 					: $"Are you sure to delete selected from list (keep files){(blackList ? " and blacklist them" : string.Empty)}?",
@@ -711,19 +1082,20 @@ namespace VDF.GUI.ViewModels {
 			if (dlgResult == MessageBoxButtons.No) return;
 
 			for (var i = Duplicates.Count - 1; i >= 0; i--) {
-				var dub = Duplicates[i];
+				DuplicateItemVM dub = Duplicates[i];
 				if (dub.Checked == false) continue;
 				if (fromDisk)
 					try {
 
 						if (createSymbolLinksInstead) {
-							DuplicateItemViewModel? fileToKeep = Duplicates.FirstOrDefault(s =>
+							DuplicateItemVM fileToKeep = Duplicates.FirstOrDefault(s =>
 							s.ItemInfo.GroupId == dub.ItemInfo.GroupId &&
 							s.Checked == false);
-							if (fileToKeep == null) {
+							if (fileToKeep == default(DuplicateItemVM)) {
 								throw new Exception($"Cannot create a symbol link for '{dub.ItemInfo.Path}' because all items in this group are selected/checked");
 							}
 							File.CreateSymbolicLink(dub.ItemInfo.Path, fileToKeep.ItemInfo.Path);
+							TotalSizeRemovedInternal += dub.ItemInfo.SizeLong;
 						}
 						else if (CoreUtils.IsWindows) {
 							//Try moving files to recycle bin
@@ -738,9 +1110,12 @@ namespace VDF.GUI.ViewModels {
 							int result = FileUtils.SHFileOperation(ref fs);
 							if (result != 0)
 								throw new Exception($"SHFileOperation returned: {result:X}");
+							TotalSizeRemovedInternal += dub.ItemInfo.SizeLong;
 						}
-						else
+						else {
 							File.Delete(dub.ItemInfo.Path);
+							TotalSizeRemovedInternal += dub.ItemInfo.SizeLong;
+						}
 					}
 					catch (Exception ex) {
 						Logger.Instance.Info(
@@ -760,6 +1135,8 @@ namespace VDF.GUI.ViewModels {
 			}
 			if (blackList)
 				ScanEngine.SaveDatabase();
+			if (BackupAfterListChanged)
+				await ExportScanResultsIncludingThumbnails(BackupScanResultsFile);
 		}
 		public ReactiveCommand<Unit, Unit> CopySelectionCommand => ReactiveCommand.CreateFromTask(async () => {
 			var result = await new OpenFolderDialog {
